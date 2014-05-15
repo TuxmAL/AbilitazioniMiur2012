@@ -41,20 +41,37 @@ CSV::open("sc_ab.csv", "wb:ISO8859-15", {:col_sep => ';'}) do |csv|
   csv << ['settore', 'fascia', '#', 'cognome', 'nome', 'pareri pro veritate', 'abilitato']
   settori.each do |settore| 
     sett = settore.split('/')
-    # Get a Nokogiri::HTML::Document for the page were interested in...
+    # Get a Nokogiri::HTML::Document for the page we're interested in...
     (1..2).each do |fascia|
-      doc = Nokogiri::HTML(open("https://abilitazione.cineca.it/ministero.php/public/elencodomande/settore/#{sett.first}%252F#{sett.last}/fascia/#{fascia}"))  do |conf| 
-        conf.compact.noblanks.noent
+      doc = nil
+      begin
+        pagina = open("https://abilitazione.cineca.it/ministero.php/public/esito/settore/#{sett.first}%252F#{sett.last}/fascia/#{fascia}")
+      rescue RuntimeError => e
+        if e.message.include? 'redirection forbidden:'
+          nuovo_url = e.message.partition(' -> ').last
+          # evitiamo il penoso balletto che al Cineca impongono fra HTTPS -> HTTP -> HTTPS
+          nuovo_url.sub!('http:', 'https:')
+#         puts "redirezione verso #{nuovo_url} in corso."
+          pagina = open(nuovo_url)
+        end
       end
-      abilitati = doc.xpath("//table[@id='elencodomande']/tbody/tr/td[b='Si']")
-      abilitati.each do |abile|
-        celle_riga = abile.parent.xpath('(./th|td)[normalize-space()]')    
-        csv << [settore, fascia] + celle_riga.map {|el| el.text.strip}
+
+      until pagina.nil?
+        doc = Nokogiri::HTML(pagina)  do |conf|
+          conf.compact.noblanks.noent
+        end
+        elenco = doc.xpath("//table[@id='elencodomande']/tbody/tr/td[b='Si']")
+        unless elenco.empty?
+          elenco.each do |abile|
+            celle_riga = abile.parent.xpath('(./th|td)[normalize-space()]')
+            csv << [settore, fascia] + celle_riga.map {|el| el.text.strip}
+          end
+          pagina = nil
+        else
+          puts "Settore #{sett.first}/#{sett.last} - #{fascia} fascia: Decorso il termine di pubblicazione degli atti ai sensi dell'art. 8, comma 9, del DPR n. 222 del 2011."
+          pagina = open("https://abilitazione.cineca.it/ministero.php/public/esitoAbilitati/settore/#{sett.first}%252F#{sett.last}/fascia/#{fascia}")
+        end
       end
     end
   end
-#  puts "wget https://abilitazione.cineca.it/ministero.php/public/elencodomande/settore/#{p.first}%252F#{p.last}/fascia/1"
-#  puts "wget https://abilitazione.cineca.it/ministero.php/public/elencodomande/settore/#{p.first}%252F#{p.last}/fascia/2"
 end
-
-# selettore da leggere 'elencodomande' per elemento <table>
